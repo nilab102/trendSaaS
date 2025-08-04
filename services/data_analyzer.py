@@ -599,8 +599,9 @@ class TrendsClient:
         """Fetch trends data from the API"""
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
+                # Use the new router endpoint structure
                 response = await client.get(
-                    f"{self.base_url}/analyze/{keyword}",
+                    f"{self.base_url}/api/v1/trends/analyze/{keyword}",
                     params={"cmp": comparison}
                 )
                 response.raise_for_status()
