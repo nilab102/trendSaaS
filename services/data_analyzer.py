@@ -1090,6 +1090,59 @@ class SaaSOpportunityAnalyzer:
             import traceback
             print(f"Traceback: {traceback.format_exc()}")
             raise
+    
+    def _add_enhanced_insights(self, result: Dict[str, Any], trends_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Add enhanced data insights to the analysis result"""
+        enhanced_result = result.copy()
+        
+        # Build comprehensive context for insights
+        context = self.context_builder.build_context(trends_data, "comprehensive")
+        
+        # Add data quality assessment
+        enhanced_result['data_quality_assessment'] = {
+            'quality_metrics': context['data_quality'],
+            'data_completeness_score': context['data_quality']['data_completeness'],
+            'recommendations': self._generate_data_quality_recommendations(context['data_quality'])
+        }
+        
+        # Add trend analysis insights
+        enhanced_result['trend_analysis_insights'] = {
+            'market_characteristics': context['summary_insights'].get('market_trend', {}),
+            'problem_landscape': context['summary_insights'].get('problem_landscape', {}),
+            'trend_patterns': context['summary_insights'].get('trend_characteristics', {}),
+            'keyword_clusters': context.get('optimized_data', {}).get('feature_themes', [])
+        }
+        
+        # Add processing metadata
+        enhanced_result['processing_metadata'] = {
+            'processing_timestamp': datetime.now().isoformat(),
+            'data_enrichment_applied': True,
+            'token_optimization_applied': True,
+            'context_building_method': 'enhanced_multi_layer'
+        }
+        
+        return enhanced_result
+    
+    def _generate_data_quality_recommendations(self, quality_metrics: Dict[str, Any]) -> List[str]:
+        """Generate recommendations based on data quality assessment"""
+        recommendations = []
+        
+        if quality_metrics['data_completeness'] < 0.7:
+            recommendations.append("Consider expanding the search timeframe or adding comparison keywords for better data coverage")
+        
+        if not quality_metrics['has_interest_data']:
+            recommendations.append("Interest over time data is missing - this may affect market maturity analysis accuracy")
+        
+        if not quality_metrics['has_related_queries']:
+            recommendations.append("Related queries data is missing - this may limit problem identification insights")
+        
+        if not quality_metrics['has_rising_searches']:
+            recommendations.append("Rising searches data is missing - this may miss emerging trends and opportunities")
+        
+        if not recommendations:
+            recommendations.append("Data quality is good - analysis should provide reliable insights")
+        
+        return recommendations
 
 # Usage Example
 async def main():
