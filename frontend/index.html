@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TrendSaaS - AI-Powered SaaS Opportunity Analyzer</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <div class="logo">
+                    <i class="fas fa-chart-line"></i>
+                    <h1>TrendSaaS</h1>
+                </div>
+                <p class="tagline">AI-Powered SaaS Opportunity Analyzer</p>
+                <div id="connection-status" class="connection-status">
+                    <span class="status-indicator disconnected"></span>
+                    <span class="status-text">Disconnected</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main">
+        <div class="container">
+            <!-- Input Section -->
+            <section id="input-section" class="input-section">
+                <div class="input-card">
+                    <h2>Discover SaaS Opportunities</h2>
+                    <p>Enter a keyword to analyze market trends and identify profitable SaaS opportunities</p>
+                    
+                    <form id="analysis-form" class="analysis-form">
+                        <div class="input-group">
+                            <label for="keyword-input">Keyword to Analyze</label>
+                            <div class="input-wrapper">
+                                <i class="fas fa-search"></i>
+                                <input 
+                                    type="text" 
+                                    id="keyword-input" 
+                                    placeholder="e.g., productivity tools, project management, ai tools"
+                                    required
+                                    minlength="2"
+                                    maxlength="100"
+                                >
+                            </div>
+                        </div>
+                        
+                        <div class="form-actions">
+                            <button type="submit" id="analyze-btn" class="btn btn-primary">
+                                <i class="fas fa-rocket"></i>
+                                Start Analysis
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </section>
+
+            <!-- Progress Section -->
+            <section id="progress-section" class="progress-section hidden">
+                <div class="progress-card">
+                    <h3>Analysis in Progress</h3>
+                    <p id="progress-message">Initializing analysis...</p>
+                    
+                        <div class="progress-container">
+                            <div class="progress-bar">
+                                <div id="progress-fill" class="progress-fill"></div>
+                            </div>
+                            <div id="progress-percentage" class="progress-percentage">0%</div>
+                        </div>
+                        
+                        <div class="progress-actions">
+                            <button id="stop-analysis-btn" class="btn btn-danger hidden">
+                                <i class="fas fa-stop"></i>
+                                Stop Analysis
+                            </button>
+                        </div>
+                    
+                    <div id="progress-steps" class="progress-steps">
+                        <!-- Steps will be populated dynamically -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- Results Section -->
+            <section id="results-section" class="results-section hidden">
+                <div class="results-header">
+                    <h2>Analysis Results</h2>
+                    <button id="new-analysis-btn" class="btn btn-secondary">
+                        <i class="fas fa-plus"></i>
+                        New Analysis
+                    </button>
+                </div>
+                
+                <div id="results-content" class="results-content">
+                    <!-- Results will be populated dynamically -->
+                </div>
+            </section>
+
+            <!-- Error Section -->
+            <section id="error-section" class="error-section hidden">
+                <div class="error-card">
+                    <div class="error-icon">
+                        <i class="fas fa-exclamation-triangle"></i>
+                    </div>
+                    <h3>Analysis Failed</h3>
+                    <p id="error-message">An error occurred during analysis.</p>
+                    <button id="retry-btn" class="btn btn-primary">
+                        <i class="fas fa-redo"></i>
+                        Try Again
+                    </button>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <!-- Loading Overlay -->
+    <div id="loading-overlay" class="loading-overlay hidden">
+        <div class="loading-spinner">
+            <div class="spinner"></div>
+            <p>Connecting to server...</p>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="scripts/websocket.js"></script>
+    <script src="scripts/ui.js"></script>
+    <script src="scripts/app.js"></script>
+</body>
+</html> 
