@@ -61,7 +61,10 @@ class ConnectionManager:
             await websocket.send_text(message)
         except Exception as e:
             logger.error(f"Error sending message to WebSocket: {e}")
-            self.disconnect(websocket)
+            # Don't immediately disconnect, let the connection manager handle it
+            # Only disconnect if it's a critical error
+            if "Connection is closed" in str(e) or "WebSocket is closed" in str(e):
+                self.disconnect(websocket)
 
     async def broadcast(self, message: str):
         disconnected = []
@@ -70,7 +73,9 @@ class ConnectionManager:
                 await connection.send_text(message)
             except Exception as e:
                 logger.error(f"Error broadcasting to WebSocket: {e}")
-                disconnected.append(connection)
+                # Only mark for disconnection if it's a critical error
+                if "Connection is closed" in str(e) or "WebSocket is closed" in str(e):
+                    disconnected.append(connection)
         
         # Remove disconnected connections
         for connection in disconnected:
@@ -184,10 +189,10 @@ async def websocket_endpoint(websocket: WebSocket):
     
     try:
         while True:
-            # Wait for client message
-            data = await websocket.receive_text()
-            
             try:
+                # Wait for client message
+                data = await websocket.receive_text()
+                
                 # Parse the message
                 message_data = json.loads(data)
                 message_type = message_data.get("type", "analyze")
@@ -233,6 +238,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     )
                     
             except json.JSONDecodeError:
+                logger.warning("Invalid JSON received from WebSocket client")
                 await manager.send_personal_message(
                     json.dumps(WebSocketMessage(
                         type="error",
@@ -241,20 +247,30 @@ async def websocket_endpoint(websocket: WebSocket):
                     ).dict()),
                     websocket
                 )
+            except WebSocketDisconnect:
+                logger.info("WebSocket client disconnected")
+                break
             except Exception as e:
-                await manager.send_personal_message(
-                    json.dumps(WebSocketMessage(
-                        type="error",
-                        message=f"Error processing message: {str(e)}",
-                        timestamp=datetime.now().isoformat()
-                    ).dict()),
-                    websocket
-                )
+                logger.error(f"Error processing WebSocket message: {e}")
+                # Try to send error message, but don't fail if we can't
+                try:
+                    await manager.send_personal_message(
+                        json.dumps(WebSocketMessage(
+                            type="error",
+                            message=f"Error processing message: {str(e)}",
+                            timestamp=datetime.now().isoformat()
+                        ).dict()),
+                        websocket
+                    )
+                except:
+                    logger.error("Failed to send error message to client")
+                    break
                 
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
+        logger.info("WebSocket client disconnected normally")
     except Exception as e:
-        logger.error(f"WebSocket error: {e}")
+        logger.error(f"WebSocket connection error: {e}")
+    finally:
         manager.disconnect(websocket)
 
 async def run_analysis_with_progress(websocket: WebSocket, keyword: str, comparison: bool):
