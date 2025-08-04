@@ -1077,12 +1077,12 @@ class SaaSOpportunityAnalyzer:
                 "innovative_features": innovative_features.model_dump() if innovative_features else {}
             }
             
-                    print("✅ Analysis complete!")
-        
-        # Add enhanced data insights to the result
-        enhanced_result = self._add_enhanced_insights(result, trends_data)
-        
-        return enhanced_result
+            print("✅ Analysis complete!")
+            
+            # Add enhanced data insights to the result
+            enhanced_result = self._add_enhanced_insights(result, trends_data)
+            
+            return enhanced_result
             
         except Exception as e:
             print(f"❌ Analysis failed: {e}")
@@ -1178,8 +1178,42 @@ async def main():
         results = await analyzer.analyze_keyword(keyword)
         
         print("\n" + "="*80)
-        print(f"SAAS OPPORTUNITY ANALYSIS RESULTS FOR: {keyword.upper()}")
+        print(f"ENHANCED SAAS OPPORTUNITY ANALYSIS RESULTS FOR: {keyword.upper()}")
         print("="*80)
+        
+        # Display data quality assessment
+        if 'data_quality_assessment' in results:
+            quality = results['data_quality_assessment']
+            print(f"\n📊 DATA QUALITY ASSESSMENT:")
+            print(f"   Completeness Score: {quality.get('data_completeness_score', 0):.1%}")
+            print(f"   Recommendations:")
+            for rec in quality.get('recommendations', []):
+                print(f"     • {rec}")
+        
+        # Display trend analysis insights
+        if 'trend_analysis_insights' in results:
+            insights = results['trend_analysis_insights']
+            print(f"\n🔍 TREND ANALYSIS INSIGHTS:")
+            
+            market_chars = insights.get('market_characteristics', {})
+            if market_chars:
+                print(f"   Market Trend: {market_chars.get('direction', 'N/A')}")
+                print(f"   Volatility: {market_chars.get('volatility', 'N/A')}")
+                print(f"   Interest Level: {market_chars.get('interest_level', 'N/A')}")
+            
+            problem_landscape = insights.get('problem_landscape', {})
+            if problem_landscape:
+                print(f"   Has Pain Points: {problem_landscape.get('has_pain_points', False)}")
+                print(f"   Solution Seeking: {problem_landscape.get('solution_seeking', False)}")
+                print(f"   Problem Density: {problem_landscape.get('problem_density', 0):.2f}")
+        
+        # Display processing metadata
+        if 'processing_metadata' in results:
+            metadata = results['processing_metadata']
+            print(f"\n⚙️ PROCESSING METADATA:")
+            print(f"   Data Enrichment: {'✓ Applied' if metadata.get('data_enrichment_applied') else '✗ Not Applied'}")
+            print(f"   Token Optimization: {'✓ Applied' if metadata.get('token_optimization_applied') else '✗ Not Applied'}")
+            print(f"   Context Method: {metadata.get('context_building_method', 'N/A')}")
         
         # Display problems
         print("\n🔍 IDENTIFIED USER PROBLEMS:")
