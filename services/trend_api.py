@@ -10,6 +10,11 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from pytrends.request import TrendReq
 import uvicorn
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv(override=True)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
