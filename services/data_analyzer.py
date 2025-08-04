@@ -1,6 +1,7 @@
 import os
 import asyncio
 import httpx
+import http.client
 from typing import Dict, List, Optional, Any, Tuple
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
@@ -21,6 +22,7 @@ TRENDS_API_BASE_URL = os.getenv("TRENDS_API_BASE_URL", "http://localhost:8000")
 GEMINI_API_KEY = os.getenv("google_api_key")
 GEMINI_MODEL_NAME = os.getenv("google_gemini_name", "gemini-1.5-pro")
 GEMINI_MODEL_LIGHT = os.getenv("google_gemini_name_light", "gemini-1.5-flash")
+SERP_API_KEY = os.getenv("serp_api_key")
 
 # Enhanced Data Processing Classes
 class TrendsDataProcessor:
@@ -563,6 +565,30 @@ class FeatureGeneratorOutput(BaseModel):
     advanced_features: List[str] = Field(description="Features for later versions")
     technical_considerations: str = Field(description="Key technical considerations for implementation")
 
+# Competitor Analysis Models
+class CompetitorInfo(BaseModel):
+    name: str = Field(description="Competitor company/product name")
+    website: str = Field(description="Competitor website URL")
+    description: str = Field(description="Brief description of the competitor")
+    features: List[str] = Field(description="Key features offered by the competitor")
+    strengths: List[str] = Field(description="Competitor's main strengths")
+    weaknesses: List[str] = Field(description="Competitor's main weaknesses")
+    market_position: str = Field(description="Market position: leader, challenger, niche, or emerging")
+
+class CompetitorAnalysisOutput(BaseModel):
+    competitors: List[CompetitorInfo] = Field(description="Top 3 competitors identified")
+    market_gaps: List[str] = Field(description="Identified gaps in the market")
+    missing_features: List[str] = Field(description="Features missing from competitors")
+    competitive_advantages: List[str] = Field(description="Potential competitive advantages")
+    analysis_summary: str = Field(description="Summary of competitor analysis")
+
+class FeatureEnhancementOutput(BaseModel):
+    enhanced_features: List[InnovativeFeature] = Field(description="Enhanced features based on competitor analysis")
+    competitive_differentiators: List[str] = Field(description="Features that differentiate from competitors")
+    market_opportunities: List[str] = Field(description="Market opportunities identified")
+    implementation_priorities: List[str] = Field(description="Prioritized implementation order")
+    competitive_strategy: str = Field(description="Overall competitive strategy recommendation")
+
 class TrendsClient:
     """Client for interacting with the Trends API"""
     
@@ -584,6 +610,241 @@ class TrendsClient:
             except httpx.HTTPStatusError as e:
                 raise Exception(f"Trends API returned error {e.response.status_code}: {e.response.text}")
 
+class CompetitorFetcher:
+    """Fetches competitor information using SERP API"""
+    
+    def __init__(self):
+        if not SERP_API_KEY:
+            raise ValueError("SERP API key not found in environment variables")
+        self.api_key = SERP_API_KEY
+        self.base_url = "google.serper.dev"
+    
+    async def _make_serp_request(self, query: str) -> Dict[str, Any]:
+        """Make a request to SERP API"""
+        try:
+            conn = http.client.HTTPSConnection(self.base_url)
+            payload = json.dumps({"q": query})
+            headers = {
+                'X-API-KEY': self.api_key,
+                'Content-Type': 'application/json'
+            }
+            
+            conn.request("POST", "/search", payload, headers)
+            response = conn.getresponse()
+            data = response.read()
+            result = json.loads(data.decode("utf-8"))
+            conn.close()
+            
+            return result
+        except Exception as e:
+            raise Exception(f"Error making SERP API request: {e}")
+    
+    async def generate_search_queries(self, keyword: str, llm) -> List[str]:
+        """Use LLM to generate optimized search queries for finding competitors"""
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are an expert market researcher. Generate 3 optimized Google search queries to find competitors for a given keyword.
+
+Focus on queries that will return:
+- Direct competitors (similar products/services)
+- Alternative solutions
+- Market leaders in the space
+
+Make queries specific and targeted to find actual SaaS companies/products."""),
+            ("user", """Generate 3 search queries to find competitors for: {keyword}
+
+Return only the queries, one per line, no numbering or extra text.""")
+        ])
+        
+        chain = prompt | llm
+        
+        try:
+            result = await chain.ainvoke({"keyword": keyword})
+            queries = result.content.strip().split('\n')
+            # Clean and filter queries
+            cleaned_queries = [q.strip() for q in queries if q.strip() and len(q.strip()) > 5]
+            return cleaned_queries[:3]  # Return top 3
+        except Exception as e:
+            # Fallback queries
+            return [
+                f"{keyword} competitors",
+                f"best {keyword} alternatives",
+                f"top {keyword} software"
+            ]
+    
+    async def extract_competitors_from_search(self, search_results: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Extract competitor information from SERP results"""
+        competitors = []
+        
+        # Extract from organic results
+        organic_results = search_results.get('organic', [])
+        for result in organic_results[:10]:  # Top 10 results
+            title = result.get('title', '')
+            link = result.get('link', '')
+            snippet = result.get('snippet', '')
+            
+            # Filter out non-competitor results
+            if self._is_competitor_result(title, snippet):
+                competitors.append({
+                    'name': self._extract_company_name(title),
+                    'website': link,
+                    'description': snippet,
+                    'title': title
+                })
+        
+        # Remove duplicates and limit to top results
+        unique_competitors = []
+        seen_urls = set()
+        for comp in competitors:
+            domain = self._extract_domain(comp['website'])
+            if domain not in seen_urls and len(unique_competitors) < 5:
+                unique_competitors.append(comp)
+                seen_urls.add(domain)
+        
+        return unique_competitors
+    
+    def _is_competitor_result(self, title: str, snippet: str) -> bool:
+        """Check if a search result is likely a competitor"""
+        text = (title + ' ' + snippet).lower()
+        
+        # Positive indicators
+        positive_indicators = [
+            'software', 'platform', 'tool', 'app', 'solution', 'service',
+            'saas', 'cloud', 'online', 'web', 'digital', 'automation'
+        ]
+        
+        # Negative indicators (exclude these)
+        negative_indicators = [
+            'review', 'comparison', 'vs', 'versus', 'alternative', 'best',
+            'top', 'list', 'guide', 'tutorial', 'how to', 'article', 'blog'
+        ]
+        
+        has_positive = any(indicator in text for indicator in positive_indicators)
+        has_negative = any(indicator in text for indicator in negative_indicators)
+        
+        return has_positive and not has_negative
+    
+    def _extract_company_name(self, title: str) -> str:
+        """Extract company name from title"""
+        # Remove common suffixes and prefixes
+        name = title
+        suffixes = [' - ', ' | ', ' – ', ' — ', ' Review', ' Software', ' Platform', ' Tool']
+        
+        for suffix in suffixes:
+            if suffix in name:
+                name = name.split(suffix)[0]
+        
+        return name.strip()
+    
+    def _extract_domain(self, url: str) -> str:
+        """Extract domain from URL"""
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            return parsed.netloc
+        except:
+            return url
+    
+    async def fetch_competitor_details(self, competitor: Dict[str, Any], llm) -> Dict[str, Any]:
+        """Fetch detailed information about a competitor using LLM analysis"""
+        # Create a search query for more details about this competitor
+        search_query = f"{competitor['name']} features pricing"
+        
+        try:
+            search_results = await self._make_serp_request(search_query)
+            
+            # Use LLM to analyze the competitor
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", """You are a competitive intelligence expert. Analyze the provided competitor information and extract key details.
+
+Focus on:
+- Key features and capabilities
+- Strengths and weaknesses
+- Market position
+- Target audience"""),
+                ("user", """Analyze this competitor information:
+
+COMPETITOR NAME: {name}
+WEBSITE: {website}
+DESCRIPTION: {description}
+
+SEARCH RESULTS:
+{search_results}
+
+Provide a structured analysis of this competitor.""")
+            ])
+            
+            chain = prompt | llm
+            
+            analysis = await chain.ainvoke({
+                "name": competitor['name'],
+                "website": competitor['website'],
+                "description": competitor['description'],
+                "search_results": json.dumps(search_results.get('organic', [])[:3], indent=2)
+            })
+            
+            # Parse the analysis (simplified for now)
+            return {
+                **competitor,
+                'analysis': analysis.content
+            }
+            
+        except Exception as e:
+            # Return basic info if detailed analysis fails
+            return {
+                **competitor,
+                'analysis': f"Basic competitor: {competitor['name']} - {competitor['description']}"
+            }
+    
+    async def fetch_competitors(self, keyword: str, llm) -> List[Dict[str, Any]]:
+        """Main method to fetch competitors for a keyword"""
+        print(f"🔍 Fetching competitors for: '{keyword}'")
+        
+        try:
+            # Step 1: Generate optimized search queries
+            print("  📝 Generating search queries...")
+            search_queries = await self.generate_search_queries(keyword, llm)
+            print(f"  ✓ Generated {len(search_queries)} search queries")
+            
+            all_competitors = []
+            
+            # Step 2: Search for each query
+            for i, query in enumerate(search_queries, 1):
+                print(f"  🔎 Searching query {i}: '{query}'")
+                try:
+                    search_results = await self._make_serp_request(query)
+                    competitors = await self.extract_competitors_from_search(search_results)
+                    all_competitors.extend(competitors)
+                    print(f"  ✓ Found {len(competitors)} potential competitors")
+                except Exception as e:
+                    print(f"  ⚠️ Search query {i} failed: {e}")
+                    continue
+            
+            # Step 3: Remove duplicates and get top competitors
+            unique_competitors = []
+            seen_urls = set()
+            
+            for comp in all_competitors:
+                domain = self._extract_domain(comp['website'])
+                if domain not in seen_urls:
+                    unique_competitors.append(comp)
+                    seen_urls.add(domain)
+                    if len(unique_competitors) >= 3:  # Limit to top 3
+                        break
+            
+            # Step 4: Get detailed information for top competitors
+            detailed_competitors = []
+            for comp in unique_competitors:
+                print(f"  📊 Analyzing competitor: {comp['name']}")
+                detailed = await self.fetch_competitor_details(comp, llm)
+                detailed_competitors.append(detailed)
+            
+            print(f"✓ Competitor analysis complete: {len(detailed_competitors)} competitors analyzed")
+            return detailed_competitors
+            
+        except Exception as e:
+            print(f"❌ Competitor fetching failed: {e}")
+            return []
+
 class LLMPipeline:
     """Multi-step LLM pipeline for SaaS opportunity analysis with enhanced data processing"""
     
@@ -592,6 +853,7 @@ class LLMPipeline:
         self.light_llm = self._initialize_llm(model=GEMINI_MODEL_LIGHT)
         self.trends_client = TrendsClient()
         self.context_builder = ContextBuilder()
+        self.competitor_fetcher = CompetitorFetcher() if SERP_API_KEY else None
     
     def _initialize_llm(self, model: str, temperature: float = 0.1) -> ChatGoogleGenerativeAI:
         """Initialize Gemini LLM"""
@@ -693,6 +955,44 @@ class LLMPipeline:
                 mvp_features=["Basic Feature Set"],
                 advanced_features=[],
                 technical_considerations="Standard implementation required"
+            )
+        
+        elif step_name == "Competitor Analysis":
+            return CompetitorAnalysisOutput(
+                competitors=[
+                    CompetitorInfo(
+                        name="Generic Competitor",
+                        website="example.com",
+                        description="Standard competitor in the market",
+                        features=["Basic features", "Standard functionality"],
+                        strengths=["Established market presence"],
+                        weaknesses=["Limited innovation"],
+                        market_position="mid"
+                    )
+                ],
+                market_gaps=["Unable to analyze due to API error"],
+                missing_features=["Analysis incomplete"],
+                competitive_advantages=["Reliable basic features"],
+                analysis_summary="Competitor analysis failed - fallback response generated"
+            )
+        
+        elif step_name == "Feature Enhancement":
+            return FeatureEnhancementOutput(
+                enhanced_features=[
+                    InnovativeFeature(
+                        name="Enhanced Basic Feature",
+                        description="Improved version of basic functionality",
+                        innovation_level=5,
+                        implementation_complexity="medium",
+                        tags=["enhanced", "basic"],
+                        user_value="Improved user experience",
+                        competitive_advantage="Better than basic competitors"
+                    )
+                ],
+                competitive_differentiators=["Enhanced user experience"],
+                market_opportunities=["Improve existing solutions"],
+                implementation_priorities=["Enhanced Basic Feature"],
+                competitive_strategy="Focus on user experience improvements"
             )
         
         else:
@@ -850,28 +1150,6 @@ Generate 5-7 innovative features that would make this SaaS solution stand out in
         
         return await self._safe_llm_call(chain, inputs, "Feature Generation")
     
-    def _create_trends_summary(self, trends_data: Dict[str, Any]) -> str:
-        """Create a summary of trends data for context"""
-        summary_parts = []
-        
-        # Add related queries context
-        related_queries = trends_data.get('related_queries', {})
-        if related_queries.get('top'):
-            top_queries = [q.get('query', str(q)) if isinstance(q, dict) else str(q) for q in related_queries['top'][:5]]
-            summary_parts.append(f"Top related searches: {', '.join(top_queries)}")
-        
-        if related_queries.get('rising'):
-            rising_queries = [q.get('query', str(q)) if isinstance(q, dict) else str(q) for q in related_queries['rising'][:5]]
-            summary_parts.append(f"Rising related searches: {', '.join(rising_queries)}")
-        
-        # Add rising searches context
-        rising_searches = trends_data.get('rising_searches', {})
-        if rising_searches.get('rising'):
-            rising_topics = [q.get('query', str(q)) if isinstance(q, dict) else str(q) for q in rising_searches['rising'][:5]]
-            summary_parts.append(f"Rising topics: {', '.join(rising_topics)}")
-        
-        return ". ".join(summary_parts) if summary_parts else "Limited trends context available"
-    
     async def step_2_analyze_market_maturity(self, trends_data: Dict[str, Any]) -> MarketMaturity:
         """LLM 2: Analyze market maturity from interest over time data with enhanced processing"""
         
@@ -1008,6 +1286,130 @@ Provide 2-3 distinct SaaS categories with specific features that would address t
         }
         
         return await self._safe_llm_call(chain, inputs, "Feature Categories")
+    
+    async def step_4_analyze_competitors(self, keyword: str, innovative_features: FeatureGeneratorOutput) -> CompetitorAnalysisOutput:
+        """LLM 4: Analyze competitors and identify market gaps"""
+        
+        if not self.competitor_fetcher:
+            print("⚠️ SERP API key not available - skipping competitor analysis")
+            return self._create_fallback_response("Competitor Analysis", {})
+        
+        parser = PydanticOutputParser(pydantic_object=CompetitorAnalysisOutput)
+        
+        try:
+            # Step 4a: Fetch competitors using SERP API
+            print("🔍 Fetching competitor data...")
+            competitors_data = await self.competitor_fetcher.fetch_competitors(keyword, self.heavy_llm)
+            
+            if not competitors_data:
+                print("⚠️ No competitors found - using fallback")
+                return self._create_fallback_response("Competitor Analysis", {})
+            
+            # Step 4b: Analyze competitors with LLM
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", """You are a competitive intelligence expert. Analyze the provided competitor information and identify market gaps, missing features, and competitive advantages.
+
+Focus on:
+- Key features offered by each competitor
+- Strengths and weaknesses of each competitor
+- Market gaps and underserved needs
+- Features missing from all competitors
+- Potential competitive advantages for a new entrant
+- Market positioning opportunities
+
+{format_instructions}"""),
+                ("user", """Analyze these competitors for the keyword: {keyword}
+
+COMPETITORS DATA:
+{competitors_data}
+
+PROPOSED FEATURES:
+{proposed_features}
+
+Identify market gaps, missing features, and competitive advantages. Focus on opportunities where a new product could differentiate and succeed.""")
+            ])
+            
+            chain = prompt | self.heavy_llm | parser
+            
+            inputs = {
+                "keyword": keyword,
+                "competitors_data": json.dumps(competitors_data, indent=2),
+                "proposed_features": innovative_features.model_dump_json(indent=2),
+                "format_instructions": parser.get_format_instructions()
+            }
+            
+            return await self._safe_llm_call(chain, inputs, "Competitor Analysis")
+            
+        except Exception as e:
+            print(f"❌ Competitor analysis failed: {e}")
+            return self._create_fallback_response("Competitor Analysis", {})
+    
+    async def step_5_enhance_features(self, competitor_analysis: CompetitorAnalysisOutput, innovative_features: FeatureGeneratorOutput, keyword: str) -> FeatureEnhancementOutput:
+        """LLM 5: Enhance features based on competitor analysis"""
+        
+        parser = PydanticOutputParser(pydantic_object=FeatureEnhancementOutput)
+        
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are a strategic product manager and feature architect. Based on competitor analysis, enhance and refine the proposed features to create a superior competitive position.
+
+Focus on:
+- Addressing identified market gaps
+- Creating unique competitive advantages
+- Improving existing features based on competitor weaknesses
+- Adding missing features that competitors don't have
+- Prioritizing features for maximum competitive impact
+- Developing a clear competitive strategy
+
+Consider:
+- Market positioning and differentiation
+- Technical feasibility and implementation complexity
+- User value and business impact
+- Competitive moats and barriers to entry
+
+{format_instructions}"""),
+            ("user", """Enhance these features based on competitor analysis for: {keyword}
+
+ORIGINAL FEATURES:
+{original_features}
+
+COMPETITOR ANALYSIS:
+{competitor_analysis}
+
+Enhance the features to create a superior competitive position. Focus on addressing market gaps and creating unique advantages.""")
+        ])
+        
+        chain = prompt | self.heavy_llm | parser
+        
+        inputs = {
+            "keyword": keyword,
+            "original_features": innovative_features.model_dump_json(indent=2),
+            "competitor_analysis": competitor_analysis.model_dump_json(indent=2),
+            "format_instructions": parser.get_format_instructions()
+        }
+        
+        return await self._safe_llm_call(chain, inputs, "Feature Enhancement")
+    
+    def _create_trends_summary(self, trends_data: Dict[str, Any]) -> str:
+        """Create a summary of trends data for context"""
+        summary_parts = []
+        
+        # Add related queries context
+        related_queries = trends_data.get('related_queries', {})
+        if related_queries.get('top'):
+            top_queries = [q.get('query', str(q)) if isinstance(q, dict) else str(q) for q in related_queries['top'][:5]]
+            summary_parts.append(f"Top related searches: {', '.join(top_queries)}")
+        
+        if related_queries.get('rising'):
+            rising_queries = [q.get('query', str(q)) if isinstance(q, dict) else str(q) for q in related_queries['rising'][:5]]
+            summary_parts.append(f"Rising related searches: {', '.join(rising_queries)}")
+        
+        # Add rising searches context
+        rising_searches = trends_data.get('rising_searches', {})
+        if rising_searches.get('rising'):
+            rising_topics = [q.get('query', str(q)) if isinstance(q, dict) else str(q) for q in rising_searches['rising'][:5]]
+            summary_parts.append(f"Rising topics: {', '.join(rising_topics)}")
+        
+        return ". ".join(summary_parts) if summary_parts else "Limited trends context available"
 
 class SaaSOpportunityAnalyzer:
     """Main analyzer class that orchestrates the entire pipeline with enhanced data processing"""
@@ -1065,6 +1467,20 @@ class SaaSOpportunityAnalyzer:
                 raise Exception("Feature generation returned None - check LLM response parsing")
             print(f"✓ Features generated: {len(innovative_features.features)} features created")
             
+            # Step 4: Analyze competitors
+            print("🔍 Analyzing competitors...")
+            competitor_analysis = await self.pipeline.step_4_analyze_competitors(keyword, innovative_features)
+            if competitor_analysis is None:
+                raise Exception("Competitor analysis returned None - check LLM response parsing")
+            print(f"✓ Competitor analysis complete: {len(competitor_analysis.competitors)} competitors analyzed")
+            
+            # Step 5: Enhance features
+            print("🔧 Enhancing features based on competitor analysis...")
+            enhanced_features = await self.pipeline.step_5_enhance_features(competitor_analysis, innovative_features, keyword)
+            if enhanced_features is None:
+                raise Exception("Feature enhancement returned None - check LLM response parsing")
+            print(f"✓ Features enhanced: {len(enhanced_features.enhanced_features)} features enhanced")
+
             # Compile final results with safe model dumping
             result = {
                 "keyword": keyword,
@@ -1074,7 +1490,9 @@ class SaaSOpportunityAnalyzer:
                 "market_maturity": market_maturity.model_dump() if market_maturity else {},
                 "solution_goals": goals.model_dump() if goals else {},
                 "saas_opportunities": feature_suggestions.model_dump() if feature_suggestions else {},
-                "innovative_features": innovative_features.model_dump() if innovative_features else {}
+                "innovative_features": innovative_features.model_dump() if innovative_features else {},
+                "competitor_analysis": competitor_analysis.model_dump() if competitor_analysis else {},
+                "enhanced_features": enhanced_features.model_dump() if enhanced_features else {}
             }
             
             print("✅ Analysis complete!")
@@ -1112,6 +1530,38 @@ class SaaSOpportunityAnalyzer:
             'trend_patterns': context['summary_insights'].get('trend_characteristics', {}),
             'keyword_clusters': context.get('optimized_data', {}).get('feature_themes', [])
         }
+
+        # Add competitor analysis insights
+        if 'competitor_analysis' in enhanced_result and enhanced_result['competitor_analysis']:
+            enhanced_result['competitor_analysis_insights'] = {
+                'market_gaps': enhanced_result['competitor_analysis'].get('market_gaps', []),
+                'missing_features': enhanced_result['competitor_analysis'].get('missing_features', []),
+                'competitive_advantages': enhanced_result['competitor_analysis'].get('competitive_advantages', [])
+            }
+        else:
+            enhanced_result['competitor_analysis_insights'] = {
+                'market_gaps': [],
+                'missing_features': [],
+                'competitive_advantages': []
+            }
+
+        # Add enhanced features insights
+        if 'enhanced_features' in enhanced_result and enhanced_result['enhanced_features']:
+            enhanced_result['enhanced_features_insights'] = {
+                'enhanced_features': enhanced_result['enhanced_features'].get('enhanced_features', []),
+                'competitive_differentiators': enhanced_result['enhanced_features'].get('competitive_differentiators', []),
+                'market_opportunities': enhanced_result['enhanced_features'].get('market_opportunities', []),
+                'implementation_priorities': enhanced_result['enhanced_features'].get('implementation_priorities', []),
+                'competitive_strategy': enhanced_result['enhanced_features'].get('competitive_strategy', 'N/A')
+            }
+        else:
+            enhanced_result['enhanced_features_insights'] = {
+                'enhanced_features': [],
+                'competitive_differentiators': [],
+                'market_opportunities': [],
+                'implementation_priorities': [],
+                'competitive_strategy': 'N/A'
+            }
         
         # Add processing metadata
         enhanced_result['processing_metadata'] = {
@@ -1164,6 +1614,10 @@ async def main():
     print(f"   Gemini Model: {GEMINI_MODEL_NAME}")
     print(f"   Light Model: {GEMINI_MODEL_LIGHT}")
     print(f"   API Key: {'✓ Set' if GEMINI_API_KEY else '❌ Missing'}")
+    print(f"   SERP API Key: {'✓ Set' if SERP_API_KEY else '❌ Missing'}")
+    
+    if not SERP_API_KEY:
+        print("⚠️ Warning: SERP API key not found. Competitor analysis will be limited.")
     
     analyzer = SaaSOpportunityAnalyzer()
     
@@ -1206,6 +1660,122 @@ async def main():
                 print(f"   Has Pain Points: {problem_landscape.get('has_pain_points', False)}")
                 print(f"   Solution Seeking: {problem_landscape.get('solution_seeking', False)}")
                 print(f"   Problem Density: {problem_landscape.get('problem_density', 0):.2f}")
+        
+        # Display competitor analysis insights
+        if 'competitor_analysis_insights' in results:
+            insights = results['competitor_analysis_insights']
+            print(f"\n👥 COMPETITOR ANALYSIS INSIGHTS:")
+            print(f"   Market Gaps: {', '.join(insights.get('market_gaps', []))}")
+            print(f"   Missing Features: {', '.join(insights.get('missing_features', []))}")
+            print(f"   Competitive Advantages: {', '.join(insights.get('competitive_advantages', []))}")
+
+        # Display innovative features
+        features_data = results.get("innovative_features", {})
+        if features_data:
+            print(f"\n🚀 INNOVATIVE FEATURES:")
+            
+            mvp_features = features_data.get("mvp_features", [])
+            if mvp_features:
+                print(f"\n   MVP FEATURES (Priority):")
+                all_features = features_data.get("features", [])
+                for i, feature_name in enumerate(mvp_features, 1):
+                    feature_details = next((f for f in all_features if f.get("name") == feature_name), None)
+                    if feature_details:
+                        print(f"   {i}. {feature_details.get('name', 'N/A')}")
+                        print(f"      {feature_details.get('description', 'N/A')}")
+                        print(f"      Tags: {', '.join(feature_details.get('tags', []))}")
+                        print(f"      Innovation Level: {feature_details.get('innovation_level', 'N/A')}/10")
+                        print(f"      Complexity: {feature_details.get('implementation_complexity', 'N/A')}")
+            
+            advanced_features = features_data.get("advanced_features", [])
+            if advanced_features:
+                print(f"\n   ADVANCED FEATURES (Future):")
+                all_features = features_data.get("features", [])
+                for i, feature_name in enumerate(advanced_features, 1):
+                    feature_details = next((f for f in all_features if f.get("name") == feature_name), None)
+                    if feature_details:
+                        print(f"   {i}. {feature_details.get('name', 'N/A')}")
+                        print(f"      {feature_details.get('description', 'N/A')}")
+                        print(f"      Tags: {', '.join(feature_details.get('tags', []))}")
+            
+            tech_considerations = features_data.get("technical_considerations", "N/A")
+            print(f"\n🔧 TECHNICAL CONSIDERATIONS:")
+            print(f"   {tech_considerations}")
+        
+        # Display competitor analysis
+        competitor_data = results.get("competitor_analysis", {})
+        if competitor_data and competitor_data.get("competitors"):
+            print(f"\n👥 COMPETITOR ANALYSIS:")
+            competitors = competitor_data.get("competitors", [])
+            for i, competitor in enumerate(competitors, 1):
+                print(f"\n   {i}. {competitor.get('name', 'N/A')}")
+                print(f"      Website: {competitor.get('website', 'N/A')}")
+                print(f"      Description: {competitor.get('description', 'N/A')}")
+                print(f"      Market Position: {competitor.get('market_position', 'N/A')}")
+                
+                features = competitor.get('features', [])
+                if features:
+                    print(f"      Features: {', '.join(features[:3])}{'...' if len(features) > 3 else ''}")
+                
+                strengths = competitor.get('strengths', [])
+                if strengths:
+                    print(f"      Strengths: {', '.join(strengths[:2])}{'...' if len(strengths) > 2 else ''}")
+                
+                weaknesses = competitor.get('weaknesses', [])
+                if weaknesses:
+                    print(f"      Weaknesses: {', '.join(weaknesses[:2])}{'...' if len(weaknesses) > 2 else ''}")
+            
+            # Display market gaps and opportunities
+            market_gaps = competitor_data.get("market_gaps", [])
+            if market_gaps:
+                print(f"\n   📈 MARKET GAPS:")
+                for gap in market_gaps[:3]:
+                    print(f"      • {gap}")
+            
+            missing_features = competitor_data.get("missing_features", [])
+            if missing_features:
+                print(f"\n   ❌ MISSING FEATURES:")
+                for feature in missing_features[:3]:
+                    print(f"      • {feature}")
+            
+            competitive_advantages = competitor_data.get("competitive_advantages", [])
+            if competitive_advantages:
+                print(f"\n   🏆 COMPETITIVE ADVANTAGES:")
+                for advantage in competitive_advantages[:3]:
+                    print(f"      • {advantage}")
+        
+        # Display enhanced features
+        enhanced_data = results.get("enhanced_features", {})
+        if enhanced_data and enhanced_data.get("enhanced_features"):
+            print(f"\n🚀 ENHANCED FEATURES (Post-Competitor Analysis):")
+            
+            enhanced_features = enhanced_data.get("enhanced_features", [])
+            for i, feature in enumerate(enhanced_features[:5], 1):
+                print(f"\n   {i}. {feature.get('name', 'N/A')}")
+                print(f"      {feature.get('description', 'N/A')}")
+                print(f"      Innovation Level: {feature.get('innovation_level', 'N/A')}/10")
+                print(f"      Competitive Advantage: {feature.get('competitive_advantage', 'N/A')}")
+                print(f"      Tags: {', '.join(feature.get('tags', []))}")
+            
+            competitive_strategy = enhanced_data.get("competitive_strategy", "N/A")
+            print(f"\n   🎯 COMPETITIVE STRATEGY:")
+            print(f"      {competitive_strategy}")
+            
+            implementation_priorities = enhanced_data.get("implementation_priorities", [])
+            if implementation_priorities:
+                print(f"\n   📋 IMPLEMENTATION PRIORITIES:")
+                for priority in implementation_priorities[:5]:
+                    print(f"      • {priority}")
+        
+        # Display enhanced features insights
+        if 'enhanced_features_insights' in results:
+            insights = results['enhanced_features_insights']
+            print(f"\n🚀 ENHANCED FEATURES INSIGHTS:")
+            print(f"   Enhanced Features: {', '.join([f.get('name') for f in insights.get('enhanced_features', [])])}")
+            print(f"   Competitive Differentiators: {', '.join(insights.get('competitive_differentiators', []))}")
+            print(f"   Market Opportunities: {', '.join(insights.get('market_opportunities', []))}")
+            print(f"   Implementation Priorities: {', '.join(insights.get('implementation_priorities', []))}")
+            print(f"   Competitive Strategy: {insights.get('competitive_strategy', 'N/A')}")
         
         # Display processing metadata
         if 'processing_metadata' in results:
@@ -1250,37 +1820,6 @@ async def main():
         print(f"\n🏆 RECOMMENDED: {recommended}")
         
         # Display innovative features
-        features_data = results.get("innovative_features", {})
-        if features_data:
-            print(f"\n🚀 INNOVATIVE FEATURES:")
-            
-            mvp_features = features_data.get("mvp_features", [])
-            if mvp_features:
-                print(f"\n   MVP FEATURES (Priority):")
-                all_features = features_data.get("features", [])
-                for i, feature_name in enumerate(mvp_features, 1):
-                    feature_details = next((f for f in all_features if f.get("name") == feature_name), None)
-                    if feature_details:
-                        print(f"   {i}. {feature_details.get('name', 'N/A')}")
-                        print(f"      {feature_details.get('description', 'N/A')}")
-                        print(f"      Tags: {', '.join(feature_details.get('tags', []))}")
-                        print(f"      Innovation Level: {feature_details.get('innovation_level', 'N/A')}/10")
-                        print(f"      Complexity: {feature_details.get('implementation_complexity', 'N/A')}")
-            
-            advanced_features = features_data.get("advanced_features", [])
-            if advanced_features:
-                print(f"\n   ADVANCED FEATURES (Future):")
-                all_features = features_data.get("features", [])
-                for i, feature_name in enumerate(advanced_features, 1):
-                    feature_details = next((f for f in all_features if f.get("name") == feature_name), None)
-                    if feature_details:
-                        print(f"   {i}. {feature_details.get('name', 'N/A')}")
-                        print(f"      {feature_details.get('description', 'N/A')}")
-                        print(f"      Tags: {', '.join(feature_details.get('tags', []))}")
-            
-            tech_considerations = features_data.get("technical_considerations", "N/A")
-            print(f"\n🔧 TECHNICAL CONSIDERATIONS:")
-            print(f"   {tech_considerations}")
         
         print(f"\n{'='*80}")
         print("✅ Analysis completed successfully!")
