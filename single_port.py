@@ -258,7 +258,7 @@ async def shutdown_event():
 if __name__ == "__main__":
     # Configuration
     host = os.getenv("HOST", "0.0.0.0")
-    port = int(os.getenv("PORT", "8000"))
+    port = int(os.getenv("PORT", "10000"))  # Render's default port
     reload = os.getenv("RELOAD", "true").lower() == "true"
     
     logger.info("=" * 60)
