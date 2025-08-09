@@ -18,7 +18,9 @@ import statistics
 load_dotenv(override=True)
 
 # Environment variables
-TRENDS_API_BASE_URL = os.getenv("TRENDS_API_BASE_URL", "http://localhost:8000")
+# Default the Trends API base URL to the same PORT as this unified app (single-port deploys)
+_DEFAULT_PORT = os.getenv("PORT", "3000")
+TRENDS_API_BASE_URL = os.getenv("TRENDS_API_BASE_URL", f"http://127.0.0.1:{_DEFAULT_PORT}")
 GEMINI_API_KEY = os.getenv("google_api_key")
 GEMINI_MODEL_NAME = os.getenv("google_gemini_name", "gemini-1.5-pro")
 GEMINI_MODEL_LIGHT = os.getenv("google_gemini_name_light", "gemini-1.5-flash")
@@ -599,17 +601,52 @@ class TrendsClient:
         """Fetch trends data from the API"""
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
-                # Use the new router endpoint structure
+                # Prefer in-process call when base_url resolves to this server
                 response = await client.get(
                     f"{self.base_url}/api/v1/trends/analyze/{keyword}",
                     params={"cmp": comparison}
                 )
                 response.raise_for_status()
                 return response.json()
-            except httpx.RequestError as e:
-                raise Exception(f"Error connecting to trends API: {e}")
-            except httpx.HTTPStatusError as e:
-                raise Exception(f"Trends API returned error {e.response.status_code}: {e.response.text}")
+            except (httpx.RequestError, httpx.HTTPStatusError):
+                # Fallback to internal service to avoid network dependency
+                try:
+                    from services.trends_router import TrendsService as _TrendsService
+                except Exception as import_error:
+                    raise Exception(f"Error connecting to trends API: All connection attempts failed and internal fallback unavailable: {import_error}")
+
+                service = _TrendsService()
+                raw = await service.get_trends_data(keyword, comparison)
+
+                # Convert Pydantic models to plain dicts for analyzer consumption
+                processed_interest = service._process_interest_over_time(raw.get('interest_over_time'), keyword)
+                interest_over_time = [
+                    {"date": point.date, "interest": point.interest} for point in processed_interest
+                ]
+
+                processed_rq = service._process_related_queries(raw.get('related_queries'))
+                related_queries = {
+                    "top": [{"query": item.query, "value": item.value} for item in processed_rq.get('top', [])],
+                    "rising": [{"query": item.query, "value": item.value} for item in processed_rq.get('rising', [])],
+                }
+
+                processed_rs = service._process_rising_searches(raw.get('related_topics'))
+                rising_searches = {
+                    "top": [{"query": item.query, "value": item.value} for item in processed_rs.get('top', [])],
+                    "rising": [{"query": item.query, "value": item.value} for item in processed_rs.get('rising', [])],
+                }
+
+                return {
+                    "keyword": keyword,
+                    "comparison_enabled": comparison,
+                    "interest_over_time": interest_over_time,
+                    "related_queries": related_queries,
+                    "rising_searches": rising_searches,
+                    "metadata": {
+                        "source": "internal_fallback",
+                        "timeframe": "last_12_months",
+                    },
+                }
 
 class CompetitorFetcher:
     """Fetches competitor information using SERP API"""

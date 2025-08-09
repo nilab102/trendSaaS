@@ -37,10 +37,9 @@ class TrendSaaSWebSocket {
      */
     getServerUrl() {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const host = window.location.hostname;
-        // Always use port 8000 for backend API, regardless of frontend port
-        const port = '8000';
-        return `${protocol}//${host}:${port}/api/v1/analyzer/ws`;
+        // Use current origin (host:port) so it works in single-port deployments
+        const hostWithPort = window.location.host;
+        return `${protocol}//${hostWithPort}/api/v1/analyzer/ws`;
     }
 
     /**
